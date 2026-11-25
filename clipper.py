@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""Create transcript-ranked vertical clips from an authorized public video URL."""
+"""Create transcript-ranked vertical clips from an authorized video URL."""
 import argparse
 import json
 import re
-import shutil
 import subprocess
 from pathlib import Path
 
@@ -26,11 +25,29 @@ def run(command):
 def download(url):
     WORK.mkdir(exist_ok=True)
     template = str(WORK / "source.%(ext)s")
-    run([
+    command = [
         "yt-dlp", "--no-playlist", "--no-warnings",
+        "--retries", "3", "--fragment-retries", "3",
         "-f", "bv*+ba/b", "--merge-output-format", "mp4",
-        "-o", template, url
-    ])
+        "-o", template
+    ]
+    cookies = WORK / "youtube-cookies.txt"
+    if cookies.is_file() and cookies.stat().st_size:
+        command += ["--cookies", str(cookies)]
+        print("Using optional repository Actions secret for authenticated access.")
+    command.append(url)
+    try:
+        run(command)
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError(
+            "yt-dlp could not access this video. If the log says YouTube requires "
+            "sign-in or confirms you are not a bot, the GitHub-hosted runner is being "
+            "blocked by YouTube. For a video you own or are authorized to process, "
+            "you may configure your own Netscape-format cookies as the "
+            "YOUTUBE_COOKIES_BASE64 GitHub Actions secret. Never paste cookies into "
+            "chat. Cookies may still not work from a hosted runner; alternatively "
+            "use a directly accessible media file URL or a permitted local download."
+        ) from exc
     candidates = sorted(WORK.glob("source.*"), key=lambda p: p.stat().st_size, reverse=True)
     candidates = [p for p in candidates if p.suffix.lower() in {".mp4", ".mkv", ".webm", ".mov"}]
     if not candidates:
@@ -57,8 +74,7 @@ def score_window(rows, start, end):
     words = re.findall(r"\b[\w']+\b", text.lower())
     if len(words) < 18:
         return None
-    score = 0.0
-    score += min(len(words), 110) * 0.12
+    score = min(len(words), 110) * 0.12
     score += sum(1.8 for w in words if w in HOOK_WORDS)
     score += min(sum(1 for w in words if w.isdigit()), 5) * 0.5
     score += text.count("?") * 0.8 + text.count("!") * 0.6
@@ -72,16 +88,14 @@ def score_window(rows, start, end):
 def choose_clips(rows, count):
     first = min(r["start"] for r in rows)
     last = max(r["end"] for r in rows)
-    duration = 45.0
-    step = 12.0
     candidates = []
     start = max(0.0, first - 2)
     while start + 22 <= last:
-        end = min(start + duration, last)
+        end = min(start + 45.0, last)
         item = score_window(rows, start, end)
         if item:
             candidates.append(item)
-        start += step
+        start += 12.0
     candidates.sort(key=lambda x: x["score"], reverse=True)
     selected = []
     for item in candidates:
@@ -112,7 +126,6 @@ def render(video, item, rows, index):
     srt = WORK / f"clip_{index:02}.srt"
     target = OUT / f"short_{index:02}.mp4"
     make_srt(rows, item["start"], item["end"], srt)
-    # Center crop to a 9:16 frame; this does not perform AI subject tracking.
     vf = (
         "scale=1080:1920:force_original_aspect_ratio=increase,"
         "crop=1080:1920,"
@@ -145,11 +158,18 @@ def main():
     clips = choose_clips(rows, args.count)
     if not clips:
         raise RuntimeError("Could not find enough speech-rich clip windows.")
-    manifest = {"source_file": video.name, "language": language, "selection_note": "Transcript heuristic only; not a guarantee of virality and does not inspect visual context.", "clips": []}
+    manifest = {
+        "source_file": video.name,
+        "language": language,
+        "selection_note": "Transcript heuristic only; it does not inspect visual context or guarantee virality.",
+        "clips": []
+    }
     for i, item in enumerate(clips, 1):
         target = render(video, item, rows, i)
         manifest["clips"].append({**item, "file": target.name})
-    (OUT / "manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
+    (OUT / "manifest.json").write_text(
+        json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
     print(f"Created {len(clips)} clip(s) in {OUT}/")
 
 
