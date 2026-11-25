@@ -22,18 +22,13 @@ cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --config Release -j 2
 cp build/bin/whisper-cli $PREFIX/bin/
 
+cd ~
+if [ ! -d Link2Shorts ]; then
+  git clone https://github.com/mrynxgod-ops/Link2Shorts.git
+fi
 mkdir -p ~/Link2Shorts/models
 cd ~/Link2Shorts
 curl -L 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin' -o models/ggml-base.bin
-```
-
-If you have not cloned Link2Shorts yet, clone it before the model-download commands:
-
-```bash
-cd ~
-git clone https://github.com/mrynxgod-ops/Link2Shorts.git
-mkdir -p ~/Link2Shorts/models
-cd ~/Link2Shorts
 ```
 
 Then run the worker:
